@@ -26,7 +26,61 @@ export class Renderer {
 
     constructor(engine: SimulationEngine) {
         this.engine = engine;
+        this.setupUI();
         this.p = new p5(this.sketch.bind(this), document.getElementById('simulation-container') || undefined);
+    }
+
+    private setupUI() {
+        // Create sidebar container
+        let sidebar = document.querySelector('.simulation-sidebar');
+        if (!sidebar) {
+            sidebar = document.createElement('div');
+            sidebar.className = 'simulation-sidebar';
+            document.body.appendChild(sidebar);
+
+            // Add sidebar header
+            const header = document.createElement('div');
+            header.className = 'simulation-sidebar-header';
+            header.textContent = 'Simulation Controls';
+            sidebar.appendChild(header);
+
+            // Create stats container (first)
+            let statsContainer = document.createElement('div');
+            statsContainer.className = 'simulation-stats';
+            sidebar.appendChild(statsContainer);
+
+            // Create agent activity container (second)
+            let activityContainer = document.createElement('div');
+            activityContainer.className = 'agent-activity';
+            sidebar.appendChild(activityContainer);
+
+            // Create state info container (third)
+            let stateInfoContainer = document.createElement('div');
+            stateInfoContainer.className = 'state-info';
+            sidebar.appendChild(stateInfoContainer);
+
+            // Create legend container (fourth)
+            let legendContainer = document.createElement('div');
+            legendContainer.className = 'legend';
+            sidebar.appendChild(legendContainer);
+        }
+
+        // Create toggle button with enhanced styling
+        let toggleButton = document.querySelector('.sidebar-toggle');
+        if (!toggleButton) {
+            toggleButton = document.createElement('button');
+            toggleButton.className = 'sidebar-toggle';
+            toggleButton.innerHTML = '◀';
+            const sidebarElement = sidebar;
+            toggleButton.addEventListener('click', () => {
+                if (sidebarElement && toggleButton) {
+                    sidebarElement.classList.toggle('collapsed');
+                    toggleButton.classList.toggle('collapsed');
+                    toggleButton.innerHTML = sidebarElement.classList.contains('collapsed') ? '▶' : '◀';
+                }
+            });
+            document.body.appendChild(toggleButton);
+        }
     }
 
     private sketch(p: p5) {
@@ -53,12 +107,6 @@ export class Renderer {
             p.textAlign(p.CENTER, p.CENTER);
             p.textSize(16);
             
-            // Show UI elements
-            const statsEl = document.querySelector('.simulation-stats') as HTMLDivElement;
-            const legendEl = document.querySelector('.legend') as HTMLDivElement;
-            if (statsEl) statsEl.style.display = 'block';
-            if (legendEl) legendEl.style.display = 'block';
-
             console.log('Canvas created:', p.width, p.height);
         };
 
@@ -302,120 +350,154 @@ export class Renderer {
 
     private drawStats() {
         const stats = this.engine.getStats();
+        const agents = this.engine.getAgents();
         
-        // Create stats container if it doesn't exist
-        let statsContainer = document.querySelector('.simulation-stats');
-        if (!statsContainer) {
-            statsContainer = document.createElement('div');
-            statsContainer.className = 'simulation-stats';
-            document.body.appendChild(statsContainer);
+        // Update stats content
+        const statsContainer = document.querySelector('.simulation-stats');
+        if (statsContainer) {
+            statsContainer.innerHTML = `
+                <h3>Simulation Stats</h3>
+                <div class="stat-group">
+                    <div>
+                        <span class="stat-label">Population:</span>
+                        <span class="stat-value">${stats.population}</span>
+                    </div>
+                    <div>
+                        <span class="stat-label">Tick:</span>
+                        <span class="stat-value">${stats.tick}</span>
+                    </div>
+                    <div>
+                        <span class="stat-label">Births:</span>
+                        <span class="stat-value">${stats.births}</span>
+                    </div>
+                    <div>
+                        <span class="stat-label">Deaths:</span>
+                        <span class="stat-value">${stats.deaths.total}</span>
+                    </div>
+                </div>
+                <div class="stat-group">
+                    <div>
+                        <span class="stat-label">Resources:</span>
+                        <span class="stat-value">${stats.totalResources.toFixed(0)}</span>
+                    </div>
+                </div>
+            `;
         }
 
-        // Create state info container if it doesn't exist
-        let stateInfoContainer = document.querySelector('.state-info');
-        if (!stateInfoContainer) {
-            stateInfoContainer = document.createElement('div');
-            stateInfoContainer.className = 'state-info';
-            document.body.appendChild(stateInfoContainer);
+        // Update agent activity content
+        const activityContainer = document.querySelector('.agent-activity');
+        if (activityContainer) {
+            // Get the 5 most recent activities
+            const recentActivities = agents
+                .slice(-5)
+                .map(agent => {
+                    const stateConfig = this.stateConfig[agent.state];
+                    let activityText = '';
+                    switch(agent.state) {
+                        case 'exploring':
+                            activityText = 'Searching for resources or mates';
+                            break;
+                        case 'eating':
+                            activityText = `Consuming resources (Energy: ${agent.energy.toFixed(0)}%)`;
+                            break;
+                        case 'mating':
+                            activityText = 'Looking for a mate';
+                            break;
+                        case 'resting':
+                            activityText = `Recovering energy (${agent.energy.toFixed(0)}%)`;
+                            break;
+                    }
+                    return `
+                        <div class="activity-item">
+                            <span class="activity-icon" style="color: ${stateConfig.color}">${stateConfig.symbol}</span>
+                            <div class="activity-details">
+                                <div>${activityText}</div>
+                                <div class="activity-agent-id">Agent #${agent.id}</div>
+                            </div>
+                        </div>
+                    `;
+                })
+                .reverse()
+                .join('');
+
+            activityContainer.innerHTML = `
+                <h3>Recent Agent Activities</h3>
+                <div class="activity-list">
+                    ${recentActivities || '<div class="activity-item">No recent activities</div>'}
+                </div>
+            `;
         }
 
         // Update state info content
-        stateInfoContainer.innerHTML = `
-            <h3>State Descriptions</h3>
-            <div class="state-descriptions">
-                ${Object.entries(this.stateConfig).map(([state, config]) => `
-                    <div class="state-description-item">
-                        <div class="state-header">
-                            <span class="state-symbol" style="color: ${config.color}">${config.symbol}</span>
-                            <span class="state-name">${state}</span>
+        const stateInfoContainer = document.querySelector('.state-info');
+        if (stateInfoContainer) {
+            stateInfoContainer.innerHTML = `
+                <h3>State Descriptions</h3>
+                <div class="state-descriptions">
+                    ${Object.entries(this.stateConfig).map(([stateKey, config]) => {
+                        const state = stateKey as AgentState;
+                        const count = stats.byState[state] || 0;
+                        const percentage = stats.population > 0 
+                            ? Math.round((count / stats.population) * 100)
+                            : 0;
+                        
+                        return `
+                            <div class="state-description-item">
+                                <div class="state-header">
+                                    <span class="state-symbol" style="color: ${config.color}">${config.symbol}</span>
+                                    <span class="state-name">${state}</span>
+                                </div>
+                                <p class="state-detail">${this.stateDescriptions[state]}</p>
+                                <div class="state-stats">
+                                    <span class="state-count">Count: ${count}</span>
+                                    <span class="state-percentage">${percentage}%</span>
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+                <div class="simulation-metrics">
+                    <h4>Key Metrics</h4>
+                    <div class="metric">
+                        <span class="metric-label">Average Energy:</span>
+                        <div class="metric-bar">
+                            <div class="metric-fill" style="width: ${stats.avgEnergy}%; background: #00ff00;"></div>
                         </div>
-                        <p class="state-detail">${this.stateDescriptions[state as AgentState]}</p>
-                        <div class="state-stats">
-                            <span class="state-count">Count: ${stats.byState[state] || 0}</span>
-                            <span class="state-percentage">
-                                ${stats.population > 0 
-                                    ? Math.round((stats.byState[state] || 0) / stats.population * 100)
-                                    : 0}%
-                            </span>
+                        <span class="metric-value">${stats.avgEnergy.toFixed(1)}</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Average Hunger:</span>
+                        <div class="metric-bar">
+                            <div class="metric-fill" style="width: ${stats.avgHunger}%; background: #ff4444;"></div>
                         </div>
+                        <span class="metric-value">${stats.avgHunger.toFixed(1)}</span>
                     </div>
-                `).join('')}
-            </div>
-            <div class="simulation-metrics">
-                <h4>Key Metrics</h4>
-                <div class="metric">
-                    <span class="metric-label">Average Energy:</span>
-                    <div class="metric-bar">
-                        <div class="metric-fill" style="width: ${stats.avgEnergy}%; background: #00ff00;"></div>
+                    <div class="metric">
+                        <span class="metric-label">Average Stress:</span>
+                        <div class="metric-bar">
+                            <div class="metric-fill" style="width: ${stats.avgStress}%; background: #ff00ff;"></div>
+                        </div>
+                        <span class="metric-value">${stats.avgStress.toFixed(1)}</span>
                     </div>
-                    <span class="metric-value">${stats.avgEnergy.toFixed(1)}</span>
                 </div>
-                <div class="metric">
-                    <span class="metric-label">Average Hunger:</span>
-                    <div class="metric-bar">
-                        <div class="metric-fill" style="width: ${stats.avgHunger}%; background: #ff4444;"></div>
-                    </div>
-                    <span class="metric-value">${stats.avgHunger.toFixed(1)}</span>
-                </div>
-                <div class="metric">
-                    <span class="metric-label">Average Stress:</span>
-                    <div class="metric-bar">
-                        <div class="metric-fill" style="width: ${stats.avgStress}%; background: #ff00ff;"></div>
-                    </div>
-                    <span class="metric-value">${stats.avgStress.toFixed(1)}</span>
-                </div>
-            </div>
-        `;
-
-        // Update stats content with enhanced formatting
-        statsContainer.innerHTML = `
-            <h3>Simulation Stats</h3>
-            <div class="stat-group">
-                <div>
-                    <span class="stat-label">Population:</span>
-                    <span class="stat-value">${stats.population}</span>
-                </div>
-                <div>
-                    <span class="stat-label">Tick:</span>
-                    <span class="stat-value">${stats.tick}</span>
-                </div>
-                <div>
-                    <span class="stat-label">Births:</span>
-                    <span class="stat-value">${stats.births}</span>
-                </div>
-                <div>
-                    <span class="stat-label">Deaths:</span>
-                    <span class="stat-value">${stats.deaths.total}</span>
-                </div>
-            </div>
-            <div class="stat-group">
-                <div>
-                    <span class="stat-label">Resources:</span>
-                    <span class="stat-value">${stats.totalResources.toFixed(0)}</span>
-                </div>
-            </div>
-        `;
-
-        // Create legend container if it doesn't exist
-        let legendContainer = document.querySelector('.legend');
-        if (!legendContainer) {
-            legendContainer = document.createElement('div');
-            legendContainer.className = 'legend';
-            document.body.appendChild(legendContainer);
+            `;
         }
 
-        // Update legend content with enhanced formatting
-        legendContainer.innerHTML = `
-            <h3>Agent States</h3>
-            ${Object.entries(this.stateConfig).map(([state, config]) => `
+        // Update legend content
+        const legendContainer = document.querySelector('.legend');
+        if (legendContainer) {
+            legendContainer.innerHTML = `
+                <h3>Agent States</h3>
+                ${Object.entries(this.stateConfig).map(([state, config]) => `
+                    <div class="legend-item">
+                        <span class="legend-symbol" style="color: ${config.color}">${config.symbol}</span>
+                        <span class="legend-label">${state}</span>
+                    </div>
+                `).join('')}
                 <div class="legend-item">
-                    <span class="legend-symbol" style="color: ${config.color}">${config.symbol}</span>
-                    <span class="legend-label">${state}</span>
+                    <span class="legend-label">Press T to toggle trails</span>
                 </div>
-            `).join('')}
-            <div class="legend-item">
-                <span class="legend-label">Press T to toggle trails</span>
-            </div>
-        `;
+            `;
+        }
     }
 } 
