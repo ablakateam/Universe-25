@@ -1,3 +1,5 @@
+import { SimulationEngine, SimulationActivity } from './SimulationEngine';
+
 interface SimulationStats {
     population: number;
     tick: number;
@@ -24,62 +26,107 @@ interface SimulationParams {
     resourceRegenerationRate: number;
 }
 
+type ScarcityLevel = 'Abundant' | 'Sufficient' | 'Limited' | 'Critical';
+
 export class UIController {
-    private container!: HTMLDivElement;
-    private consoleOverlay!: HTMLDivElement;
-    private restartButton!: HTMLButtonElement;
-    private loadingOverlay!: HTMLDivElement;
-    private errorOverlay!: HTMLDivElement;
+    private container: HTMLDivElement;
+    private consoleOverlay: HTMLDivElement;
+    private restartButton: HTMLButtonElement;
+    private loadingOverlay: HTMLDivElement;
+    private errorOverlay: HTMLDivElement;
+    private simulationContainer: HTMLDivElement;
     private isConsoleVisible: boolean = false;
     private lastParams: SimulationParams | null = null;
     private lastStats: SimulationStats | null = null;
+    private updateQueue: Set<string> = new Set();
+    private lastUpdateTime: Record<string, number> = {};
+    private activityCount: number = 0;
+    private readonly MAX_ACTIVITIES = 5;
+    private engine: SimulationEngine;
+    private activityLog: string[] = [];
+    private maxActivityLogSize = 5;
 
-    constructor() {
+    constructor(engine: SimulationEngine) {
+        this.engine = engine;
+        
+        // Create and initialize all UI elements
+        this.container = this.createContainer();
+        this.simulationContainer = this.createSimulationContainer();
+        this.consoleOverlay = this.createConsoleOverlay();
+        this.loadingOverlay = this.createLoadingOverlay();
+        this.errorOverlay = this.createErrorOverlay();
+        this.restartButton = this.createRestartButton();
+        
+        // Setup the UI
         this.setupUI();
         this.setupEventListeners();
     }
 
-    private setupUI() {
-        // Create main container
-        this.container = document.createElement('div');
-        this.container.id = 'ui-container';
-        document.body.appendChild(this.container);
+    private createContainer(): HTMLDivElement {
+        const container = document.createElement('div');
+        container.id = 'ui-container';
+        document.body.appendChild(container);
+        return container;
+    }
 
+    private createSimulationContainer(): HTMLDivElement {
+        // Check if container already exists
+        let container = document.getElementById('simulation-container') as HTMLDivElement;
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'simulation-container';
+            document.body.appendChild(container);
+        }
+        return container;
+    }
+
+    private createConsoleOverlay(): HTMLDivElement {
+        const overlay = document.createElement('div');
+        overlay.id = 'console-overlay';
+        overlay.style.display = 'none';
+        document.body.appendChild(overlay);
+        return overlay;
+    }
+
+    private createLoadingOverlay(): HTMLDivElement {
+        const overlay = document.createElement('div');
+        overlay.id = 'loading-overlay';
+        overlay.innerHTML = `
+            <div class="loading-content">
+                <div class="loading-spinner"></div>
+                <h3>INITIALIZING SIMULATION</h3>
+                <p class="loading-subtext">Please wait...</p>
+            </div>
+        `;
+        overlay.style.display = 'none';
+        document.body.appendChild(overlay);
+        return overlay;
+    }
+
+    private createErrorOverlay(): HTMLDivElement {
+        const overlay = document.createElement('div');
+        overlay.id = 'error-overlay';
+        overlay.style.display = 'none';
+        document.body.appendChild(overlay);
+        return overlay;
+    }
+
+    private createRestartButton(): HTMLButtonElement {
+        const button = document.createElement('button');
+        button.id = 'restart-button';
+        button.textContent = 'RESTART SIMULATION';
+        button.style.display = 'none';
+        document.body.appendChild(button);
+        return button;
+    }
+
+    private setupUI() {
         // Create parameter form
         const form = this.createParameterForm();
         this.container.appendChild(form);
 
-        // Create console overlay
-        this.consoleOverlay = document.createElement('div');
-        this.consoleOverlay.id = 'console-overlay';
-        this.consoleOverlay.style.display = 'none';
-        document.body.appendChild(this.consoleOverlay);
-
-        // Create loading overlay
-        this.loadingOverlay = document.createElement('div');
-        this.loadingOverlay.id = 'loading-overlay';
-        this.loadingOverlay.innerHTML = `
-            <div class="loading-content">
-                <div class="loading-spinner"></div>
-                <p>Initializing Simulation...</p>
-                <p class="loading-subtext">Fetching environmental data...</p>
-            </div>
-        `;
-        this.loadingOverlay.style.display = 'none';
-        document.body.appendChild(this.loadingOverlay);
-
-        // Create error overlay
-        this.errorOverlay = document.createElement('div');
-        this.errorOverlay.id = 'error-overlay';
-        this.errorOverlay.style.display = 'none';
-        document.body.appendChild(this.errorOverlay);
-
-        // Create restart button (hidden by default)
-        this.restartButton = document.createElement('button');
-        this.restartButton.id = 'restart-button';
-        this.restartButton.innerHTML = 'Restart Simulation';
-        this.restartButton.style.display = 'none';
-        document.body.appendChild(this.restartButton);
+        // Create sidebar
+        this.createSidebar();
     }
 
     private createParameterForm(): HTMLFormElement {
@@ -222,12 +269,25 @@ export class UIController {
         return form;
     }
 
+    private createSidebar() {
+        // Implementation of createSidebar method
+    }
+
     private setupEventListeners() {
         // Toggle console with ~ key
         document.addEventListener('keydown', (e) => {
             if (e.key === '`' || e.key === '~') {
                 this.toggleConsole();
             }
+        });
+
+        // Add click handler for tooltips
+        document.querySelectorAll('.tooltip').forEach(tooltip => {
+            tooltip.addEventListener('click', (e) => {
+                const target = e.currentTarget as HTMLElement;
+                target.classList.add('clicked');
+                e.stopPropagation(); // Prevent event from bubbling up
+            });
         });
     }
 
@@ -259,43 +319,41 @@ export class UIController {
     }
 
     public updateConsole(stats: SimulationStats) {
-        this.lastStats = stats;  // Store the latest stats
-        if (this.isConsoleVisible) {
-            const stateInfo = stats.byState ? 
-                Object.entries(stats.byState)
-                    .map(([state, count]) => `  ${state.padEnd(10)} : ${count.toString().padStart(3)}`)
-                    .join('\n') : '';
+        const activityList = document.querySelector('.activity-list');
+        if (!activityList) return;
 
-            this.consoleOverlay.innerHTML = `
-                <pre>
-┌─ Population Statistics ───────┐
-│ Population : ${stats.population.toString().padStart(4)}        │
-│ Tick       : ${stats.tick.toString().padStart(8)}    │
-│ Births     : ${stats.births.toString().padStart(4)}        │
-│ Deaths     : ${stats.deaths.total.toString().padStart(4)}        │
-└────────────────────────────┘
+        // Generate activity message based on stats changes
+        const message = this.generateActivityMessage(stats);
+        if (message) {
+            this.activityLog.unshift(message);
+            if (this.activityLog.length > this.maxActivityLogSize) {
+                this.activityLog.pop();
+            }
 
-┌─ Death Causes ─────────────┐
-│ Starvation : ${stats.deaths.starvation.toString().padStart(4)}        │
-│ Old Age    : ${stats.deaths.oldAge.toString().padStart(4)}        │
-│ Stress     : ${stats.deaths.stress.toString().padStart(4)}        │
-└────────────────────────────┘
-
-┌─ Agent States ──────────────┐
-${stateInfo.split('\n').map(line => '│ ' + line.padEnd(26) + ' │').join('\n')}
-└────────────────────────────┘
-
-┌─ System Averages ────────────┐
-│ Stress     : ${stats.avgStress.toFixed(1).padStart(5)}       │
-│ Hunger     : ${stats.avgHunger.toFixed(1).padStart(5)}       │
-│ Energy     : ${stats.avgEnergy.toFixed(1).padStart(5)}       │
-└────────────────────────────┘
-
-┌─ Resources ─────────────────┐
-│ Total      : ${stats.totalResources.toFixed(0).padStart(5)}       │
-└────────────────────────────┘</pre>
-            `;
+            // Update activity list with animation
+            activityList.innerHTML = this.activityLog.map(msg => `
+                <div class="activity-item" style="animation: fadeIn 0.3s ease-out">
+                    <span class="activity-icon">📝</span>
+                    <span class="activity-text">${msg}</span>
+                </div>
+            `).join('');
         }
+    }
+
+    private generateActivityMessage(stats: SimulationStats): string | null {
+        const events = [];
+        
+        if (stats.births > 0) {
+            events.push(`${stats.births} new agents born 🐣`);
+        }
+        if (stats.deaths.total > 0) {
+            events.push(`${stats.deaths.total} agents passed away 💫`);
+        }
+        if (stats.totalResources > 0) {
+            events.push(`${Math.floor(stats.totalResources)} resources available 🍎`);
+        }
+
+        return events.length > 0 ? events.join(' | ') : null;
     }
 
     public showRestartButton(onRestart: () => void) {
@@ -419,9 +477,9 @@ ${stateInfo.split('\n').map(line => '│ ' + line.padEnd(26) + ' │').join('\n'
     public showError(message: string) {
         this.errorOverlay.innerHTML = `
             <div class="error-content">
-                <h3>Error</h3>
+                <h3>ERROR</h3>
                 <p>${message}</p>
-                <button onclick="this.parentElement.parentElement.style.display='none'">Close</button>
+                <button onclick="location.reload()">RESTART</button>
             </div>
         `;
         this.errorOverlay.style.display = 'flex';
@@ -429,5 +487,261 @@ ${stateInfo.split('\n').map(line => '│ ' + line.padEnd(26) + ' │').join('\n'
 
     public hideError() {
         this.errorOverlay.style.display = 'none';
+    }
+
+    public updateStats(stats: SimulationStats) {
+        const populationElement = document.getElementById('stat-population');
+        const resourcesElement = document.getElementById('stat-resources');
+        const tickElement = document.getElementById('stat-tick');
+
+        if (populationElement) {
+            populationElement.textContent = `${stats.population} 👥`;
+        }
+        if (resourcesElement) {
+            resourcesElement.textContent = `${stats.totalResources} 🍎`;
+        }
+        if (tickElement) {
+            tickElement.textContent = `${stats.tick} ⏱️`;
+        }
+    }
+
+    private updateActivityFeed(activities: SimulationActivity[]) {
+        const activityFeed = document.querySelector('.activity-feed');
+        if (!activityFeed) return;
+
+        const activityList = activityFeed.querySelector('.activity-list');
+        if (!activityList) return;
+
+        // Clear existing activities
+        while (activityList.firstChild) {
+            activityList.removeChild(activityList.firstChild);
+        }
+
+        // Add new activities
+        activities.forEach(activity => {
+            const activityItem = document.createElement('div');
+            activityItem.className = 'activity-item';
+            
+            const icon = document.createElement('span');
+            icon.className = 'activity-icon';
+            icon.style.color = this.getColorForActivityType(activity.type);
+            icon.textContent = this.getIconForActivityType(activity.type);
+            
+            const details = document.createElement('div');
+            details.className = 'activity-details';
+            
+            const description = document.createElement('div');
+            description.textContent = activity.description;
+            
+            const time = document.createElement('div');
+            time.className = 'activity-time';
+            time.textContent = this.formatTimestamp(activity.timestamp);
+            
+            details.appendChild(description);
+            details.appendChild(time);
+            
+            activityItem.appendChild(icon);
+            activityItem.appendChild(details);
+            
+            // Add with animation
+            activityItem.style.opacity = '0';
+            activityItem.style.transform = 'translateY(20px)';
+            activityList.appendChild(activityItem);
+            
+            // Trigger animation
+            requestAnimationFrame(() => {
+                activityItem.style.transition = 'all 0.3s ease-out';
+                activityItem.style.opacity = '1';
+                activityItem.style.transform = 'translateY(0)';
+            });
+        });
+    }
+
+    private getColorForActivityType(type: string): string {
+        const colors: Record<string, string> = {
+            'exploring': '#4CAF50',
+            'eating': '#FF9800',
+            'mating': '#E91E63',
+            'resting': '#2196F3',
+            'died': '#F44336'
+        };
+        return colors[type] || '#999999';
+    }
+
+    private getIconForActivityType(type: string): string {
+        const icons: Record<string, string> = {
+            'exploring': '🔍',
+            'eating': '🍽️',
+            'mating': '❤️',
+            'resting': '💤',
+            'died': '💀'
+        };
+        return icons[type] || '❓';
+    }
+
+    private formatTimestamp(timestamp: number): string {
+        const now = Date.now();
+        const diff = now - timestamp;
+        if (diff < 1000) return 'just now';
+        if (diff < 60000) return `${Math.floor(diff / 1000)}s ago`;
+        if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+        return `${Math.floor(diff / 3600000)}h ago`;
+    }
+
+    private updateStatValues(stats: SimulationStats) {
+        // Calculate derived statistics
+        const growthRate = this.calculateGrowthRate(stats);
+        const resourceEfficiency = this.calculateResourceEfficiency(stats);
+        const healthIndex = this.calculateHealthIndex(stats);
+        const socialIndex = this.calculateSocialIndex(stats);
+        const mortalityRate = this.calculateMortalityRate(stats);
+        const scarcityLevel = this.determineScarcityLevel(stats);
+        const resourcesPerAgent = stats.totalResources / (stats.population || 1);
+        const density = (stats.population / (this.lastParams?.resourceCapacity || 100) * 100);
+
+        // Update all elements with new values and status indicators
+        this.updateElement('population', stats.population, '👥', this.getStatusForValue(stats.population, 50, 100));
+        this.updateElement('births', stats.births, '🐣');
+        this.updateElement('deaths', stats.deaths.total, '💀');
+        this.updateElement('growth', `${growthRate}%`, '', '', this.getGrowthTrendClass(growthRate));
+        
+        this.updateElement('resources', stats.totalResources.toFixed(0), '🍎', this.getStatusForValue(stats.totalResources, 50, 100));
+        this.updateElement('resourcesPerAgent', resourcesPerAgent.toFixed(1), '📊');
+        this.updateElement('resourceEfficiency', `${resourceEfficiency}%`, '⚡', this.getStatusForValue(resourceEfficiency, 30, 70));
+        this.updateElement('scarcity', scarcityLevel, this.getScarcityIcon(scarcityLevel), this.getStatusForScarcity(scarcityLevel));
+        
+        this.updateElement('energy', stats.avgEnergy.toFixed(1), '⚡', this.getStatusForValue(stats.avgEnergy, 30, 70));
+        this.updateElement('stress', stats.avgStress.toFixed(1), '😰', this.getStatusForValue(100 - stats.avgStress, 30, 70));
+        this.updateElement('hunger', stats.avgHunger.toFixed(1), '🍽️', this.getStatusForValue(100 - stats.avgHunger, 30, 70));
+        this.updateElement('healthIndex', `${healthIndex}%`, '❤️', this.getStatusForValue(healthIndex, 30, 70));
+        
+        this.updateElement('density', `${density.toFixed(0)}%`, '🏘️');
+        this.updateElement('interactions', `${stats.population * 2}`, '🤝');
+        this.updateElement('territory', `${(100 - density).toFixed(0)}%`, '🗺️');
+        this.updateElement('socialIndex', `${socialIndex}%`, '👥', this.getStatusForValue(socialIndex, 30, 70));
+        
+        this.updateElement('mortalityRate', `${mortalityRate}%`, '📉', this.getStatusForValue(100 - mortalityRate, 30, 70));
+        
+        // Update death causes
+        this.updateDeathCauses(stats);
+    }
+
+    private updateElement(id: string, value: string | number, icon: string, status?: string, extraClass?: string) {
+        const element = document.getElementById(`stat-${id}`);
+        if (!element) return;
+
+        const hasChanged = this.lastUpdateTime[id] && Date.now() - this.lastUpdateTime[id] < 1000;
+        const className = `stat-value ${hasChanged ? 'updating' : ''} ${extraClass || ''}`;
+        
+        element.className = className;
+        element.innerHTML = `${value} ${icon ? `<span class="icon">${icon}</span>` : ''}`;
+        
+        if (status) {
+            element.setAttribute('data-status', status);
+        }
+        
+        this.lastUpdateTime[id] = Date.now();
+    }
+
+    private getScarcityIcon(level: ScarcityLevel): string {
+        const icons: Record<ScarcityLevel, string> = {
+            'Abundant': '🌟',
+            'Sufficient': '✨',
+            'Limited': '⚠️',
+            'Critical': '❗'
+        };
+        return icons[level];
+    }
+
+    private getGrowthTrendClass(growthRate: number): string {
+        if (growthRate > 0) return 'trend-up';
+        if (growthRate < 0) return 'trend-down';
+        return 'trend-neutral';
+    }
+
+    private calculateGrowthRate(stats: SimulationStats): number {
+        const total = stats.births - stats.deaths.total;
+        return stats.population > 0 ? Math.round((total / stats.population) * 100) : 0;
+    }
+
+    private calculateResourceEfficiency(stats: SimulationStats): number {
+        return Math.round((stats.avgEnergy / (stats.totalResources || 1)) * 100);
+    }
+
+    private calculateHealthIndex(stats: SimulationStats): number {
+        const energyWeight = 0.4;
+        const stressWeight = 0.3;
+        const hungerWeight = 0.3;
+
+        const normalizedEnergy = stats.avgEnergy / 100;
+        const normalizedStress = 1 - (stats.avgStress / 100);
+        const normalizedHunger = 1 - (stats.avgHunger / 100);
+
+        return Math.round(
+            (normalizedEnergy * energyWeight + 
+             normalizedStress * stressWeight + 
+             normalizedHunger * hungerWeight) * 100
+        );
+    }
+
+    private calculateSocialIndex(stats: SimulationStats): number {
+        // This is a placeholder calculation - adjust based on your actual social metrics
+        const densityFactor = Math.min(stats.population / (this.lastParams?.resourceCapacity || 100), 1);
+        return Math.round((1 - densityFactor) * 100);
+    }
+
+    private calculateMortalityRate(stats: SimulationStats): number {
+        return stats.population > 0 ? 
+            Math.round((stats.deaths.total / (stats.population + stats.deaths.total)) * 100) : 0;
+    }
+
+    private determineScarcityLevel(stats: SimulationStats): ScarcityLevel {
+        const resourcesPerAgent = stats.totalResources / stats.population;
+        if (resourcesPerAgent > 2) return 'Abundant';
+        if (resourcesPerAgent > 1) return 'Sufficient';
+        if (resourcesPerAgent > 0.5) return 'Limited';
+        return 'Critical';
+    }
+
+    private updateDeathCauses(stats: SimulationStats) {
+        const deathCausesElement = document.getElementById('death-causes');
+        if (!deathCausesElement) return;
+
+        const causes = [
+            { label: 'Starvation', value: stats.deaths.starvation },
+            { label: 'Old Age', value: stats.deaths.oldAge },
+            { label: 'Stress', value: stats.deaths.stress }
+        ];
+
+        const total = stats.deaths.total || 1;
+        const primaryCause = this.getPrimaryCause(stats.deaths);
+
+        deathCausesElement.innerHTML = causes.map(cause => `
+            <div class="cause ${cause.label === primaryCause ? 'primary-cause' : ''}">
+                <div class="cause-header">
+                    <span class="label">${cause.label}</span>
+                    <span class="value">${cause.value} (${Math.round((cause.value / total) * 100)}%)</span>
+                </div>
+                <div class="bar-container">
+                    <div class="bar" style="width: ${(cause.value / total * 100)}%"></div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    private getStatusForValue(value: number, warningThreshold: number, goodThreshold: number): string {
+        if (value >= goodThreshold) return 'good';
+        if (value >= warningThreshold) return 'warning';
+        return 'critical';
+    }
+
+    private getStatusForScarcity(level: ScarcityLevel): string {
+        const statusMap: Record<ScarcityLevel, string> = {
+            'Abundant': 'good',
+            'Sufficient': 'good',
+            'Limited': 'warning',
+            'Critical': 'critical'
+        };
+        return statusMap[level];
     }
 } 

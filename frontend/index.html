@@ -5,10 +5,33 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Universe 25 Simulation</title>
-    <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=VT323&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+      :root {
+        --primary: #33ff33;
+        --primary-hover: #66ff66;
+        --text: #ffffff;
+        --text-secondary: #888888;
+        --border: rgba(51, 255, 51, 0.3);
+        --background: #111111;
+        --card-bg: rgba(0, 0, 0, 0.7);
+        --card-bg-hover: rgba(0, 0, 0, 0.8);
+        --border-radius: 8px;
+        --border-radius-sm: 4px;
+        --font-mono: 'Roboto Mono', monospace;
+      }
+      
+      body {
+        margin: 0;
+        padding: 0;
+        background-color: var(--background);
+        color: var(--text);
+        font-family: var(--font-mono);
+        overflow: hidden;
+      }
+    </style>
   </head>
   <body>
-    <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

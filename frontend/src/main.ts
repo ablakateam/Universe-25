@@ -3,48 +3,39 @@ import { SimulationEngine } from './lib/SimulationEngine';
 import { Renderer } from './lib/Renderer';
 import { UIController } from './lib/UIController';
 
-// Create UI Controller
-const ui = new UIController();
-
-// Keep track of current simulation objects
+// Global state management
+let ui: UIController;
 let currentEngine: SimulationEngine | null = null;
 let currentRenderer: Renderer | null = null;
 let isRunning = false;
 let currentAnimationFrame: number | null = null;
 
-// Create simulation container
-const simulationContainer = document.createElement('div');
-simulationContainer.id = 'simulation-container';
-document.body.appendChild(simulationContainer);
-
 const UTOPIA_PRESET = {
-    initialPopulation: 20,
-    resourceCapacity: 200,
-    birthRate: 0.15,
-    timeScale: 1,
-    resourceSpots: 8,
-    resourceRegenerationRate: 0.3
+    initialPopulation: 15,          // Reduced to prevent early overcrowding
+    resourceCapacity: 300,          // Increased to ensure sufficient resources
+    birthRate: 0.08,                // Lowered to prevent population explosions
+    timeScale: 1,                   // Keep normal speed for observation
+    resourceSpots: 12,              // More spots for better distribution
+    resourceRegenerationRate: 0.4   // Faster regeneration to maintain sustainability
 };
 
 function cleanupSimulation() {
-    // Cancel any ongoing animation frame
     if (currentAnimationFrame !== null) {
         cancelAnimationFrame(currentAnimationFrame);
         currentAnimationFrame = null;
     }
 
-    // Remove the canvas
     const canvas = document.querySelector('canvas');
     if (canvas) {
         canvas.remove();
     }
 
-    // Hide simulation container and related UI
-    simulationContainer.classList.remove('active');
-
-    // Reset simulation objects
-    currentEngine = null;
-    currentRenderer = null;
+    if (currentEngine) {
+        currentEngine = null;
+    }
+    if (currentRenderer) {
+        currentRenderer = null;
+    }
     isRunning = false;
 }
 
@@ -88,59 +79,52 @@ function initializeUI() {
     form.insertBefore(presetSection, form.firstChild);
 }
 
-// Function to start simulation
 async function startSimulation() {
-    // Clean up any existing simulation
-    cleanupSimulation();
-
-    // Get parameters and create simulation
-    const params = ui.getSimulationParams();
-    console.log('Simulation parameters:', params);
-    
-    // Show loading indicator
-    ui.showLoadingIndicator();
-    
     try {
+        cleanupSimulation();
+        
+        if (ui) {
+            ui.showLoadingIndicator();
+        }
+
+        const params = ui?.getSimulationParams() || UTOPIA_PRESET;
+        console.log('Starting simulation with parameters:', params);
+
         currentEngine = new SimulationEngine(params);
-        // Wait for initialization to complete
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-        // Show simulation container
-        simulationContainer.classList.add('active');
-        
         currentRenderer = new Renderer(currentEngine);
 
-        // Hide the form and loading indicator
-        ui.hideParameterForm();
-        ui.hideLoadingIndicator();
+        if (ui) {
+            ui.hideParameterForm();
+            ui.hideLoadingIndicator();
+        }
 
         isRunning = true;
-        let lastPopulation = params.initialPopulation;
+        let lastPopulation = currentEngine.getStats().population;
         let noPopulationTicks = 0;
 
-        // Start the simulation loop
         function update() {
-            if (!isRunning) return;
+            if (!isRunning || !currentEngine) return;
 
-            // Update simulation multiple times based on time scale
-            for (let i = 0; i < params.timeScale; i++) {
-                currentEngine?.update();
-            }
-            
-            // Update console if visible
-            const stats = currentEngine?.getStats();
-            if (stats) {
-                ui.updateConsole(stats);
+            try {
+                const timeScale = currentEngine.getParams().timeScale;
+                for (let i = 0; i < timeScale; i++) {
+                    currentEngine.update();
+                }
                 
-                // Check if simulation should end
+                const stats = currentEngine.getStats();
+                if (ui) {
+                    ui.updateConsole(stats);
+                    ui.updateStats(stats);
+                }
+                
                 if (stats.population === 0) {
                     noPopulationTicks++;
-                    // Wait a short while to ensure it's not just a temporary state
-                    if (noPopulationTicks > 60) { // About 1 second at 60fps
+                    if (noPopulationTicks > 60) {
                         isRunning = false;
                         console.log('Simulation ended - Population extinct');
-                        ui.showRestartButton(() => {
+                        ui?.showRestartButton(() => {
                             cleanupSimulation();
+                            ui?.showParameterForm();
                         });
                         return;
                     }
@@ -148,35 +132,54 @@ async function startSimulation() {
                     noPopulationTicks = 0;
                     lastPopulation = stats.population;
                 }
+                
+                currentAnimationFrame = requestAnimationFrame(update);
+            } catch (error) {
+                console.error('Error in simulation loop:', error);
+                isRunning = false;
+                ui?.showError('Simulation error occurred. Please try again.');
+                cleanupSimulation();
             }
-            
-            // Store the animation frame ID
-            currentAnimationFrame = requestAnimationFrame(update);
         }
 
-        // Start the update loop
         console.log('Starting simulation loop');
         update();
     } catch (error) {
         console.error('Error starting simulation:', error);
-        ui.hideLoadingIndicator();
-        ui.showError('Failed to initialize simulation. Please try again.');
+        ui?.hideLoadingIndicator();
+        ui?.showError('Failed to initialize simulation. Please try again.');
         cleanupSimulation();
     }
 }
 
-// Handle initial form submission
-document.getElementById('parameter-form')?.addEventListener('submit', (e) => {
-    e.preventDefault();
-    startSimulation();
-});
-
 // Initialize when the page loads
 document.addEventListener('DOMContentLoaded', () => {
     console.log('DOM Content Loaded');
-    // Wait a short moment for the UIController to create the form
-    setTimeout(() => {
-        console.log('Initializing UI...');
+    try {
+        currentEngine = new SimulationEngine(UTOPIA_PRESET);
+        console.log('Engine created');
+        
+        ui = new UIController(currentEngine);
+        console.log('UI Controller created');
+
+        // Initialize UI elements including the Utopia preset button
         initializeUI();
-    }, 100);
+        console.log('UI initialized with preset buttons');
+
+        const form = document.getElementById('parameter-form');
+        if (form) {
+            form.addEventListener('submit', (e) => {
+                e.preventDefault();
+                console.log('Form submitted, starting simulation...');
+                startSimulation();
+            });
+        } else {
+            console.error('Parameter form not found');
+        }
+    } catch (error) {
+        console.error('Error during initialization:', error);
+        if (ui) {
+            ui.showError('Failed to initialize application. Please refresh the page.');
+        }
+    }
 }); 

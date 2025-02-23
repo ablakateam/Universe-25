@@ -47,6 +47,13 @@ export interface DeathStats {
     total: number;
 }
 
+export interface SimulationActivity {
+    type: string;
+    description: string;
+    timestamp: number;
+    agentId: number;
+}
+
 export class SimulationEngine {
     private agents: Agent[] = [];
     private resources: Resource[] = [];
@@ -60,6 +67,8 @@ export class SimulationEngine {
         total: 0
     };
     private seeder: RandomSeeder;
+    private recentActivities: SimulationActivity[] = [];
+    private readonly MAX_ACTIVITIES = 5;
 
     constructor(params: SimulationParams) {
         this.params = {
@@ -199,6 +208,13 @@ export class SimulationEngine {
             ?.resource || null;
     }
 
+    private addActivity(activity: SimulationActivity) {
+        this.recentActivities.unshift(activity);
+        if (this.recentActivities.length > this.MAX_ACTIVITIES) {
+            this.recentActivities.pop();
+        }
+    }
+
     private updateAgentState(agent: Agent) {
         const nearbyAgents = this.agents.filter(other => 
             other.id !== agent.id && 
@@ -216,6 +232,7 @@ export class SimulationEngine {
             agent.color = agent.sex === 'male' ? '#4444FF' : '#FF4444';
         }
 
+        const oldState = agent.state;
         switch(agent.state) {
             case 'exploring':
                 if (agent.hunger > 70) {
@@ -225,13 +242,31 @@ export class SimulationEngine {
                         agent.targetX = resource.x;
                         agent.targetY = resource.y;
                         agent.color = '#FFE837';
+                        this.addActivity({
+                            type: 'eating',
+                            description: `Agent #${agent.id} is searching for food due to high hunger (${agent.hunger.toFixed(0)}%)`,
+                            timestamp: Date.now(),
+                            agentId: agent.id
+                        });
                     }
                 } else if (agent.energy < 20) {
                     agent.state = 'resting';
                     agent.color = '#C875FF';
+                    this.addActivity({
+                        type: 'resting',
+                        description: `Agent #${agent.id} is resting to recover energy (${agent.energy.toFixed(0)}%)`,
+                        timestamp: Date.now(),
+                        agentId: agent.id
+                    });
                 } else if (agent.hunger < 50 && agent.energy > 50) {
                     agent.state = 'mating';
                     agent.color = '#FF71B3';
+                    this.addActivity({
+                        type: 'mating',
+                        description: `Agent #${agent.id} (${agent.sex}) is looking for a mate`,
+                        timestamp: Date.now(),
+                        agentId: agent.id
+                    });
                 }
                 break;
                 
@@ -250,6 +285,12 @@ export class SimulationEngine {
                         agent.targetX = null;
                         agent.targetY = null;
                         agent.color = agent.sex === 'male' ? '#4444FF' : '#FF4444';
+                        this.addActivity({
+                            type: 'exploring',
+                            description: `Agent #${agent.id} finished eating and is now exploring`,
+                            timestamp: Date.now(),
+                            agentId: agent.id
+                        });
                     }
                 }
                 break;
@@ -259,6 +300,12 @@ export class SimulationEngine {
                 if (agent.energy > 80) {
                     agent.state = 'exploring';
                     agent.color = agent.sex === 'male' ? '#4444FF' : '#FF4444';
+                    this.addActivity({
+                        type: 'exploring',
+                        description: `Agent #${agent.id} is done resting and ready to explore`,
+                        timestamp: Date.now(),
+                        agentId: agent.id
+                    });
                 }
                 break;
                 
@@ -462,5 +509,13 @@ export class SimulationEngine {
             agentCount: this.agents.length,
             agentPositions: this.agents.map(a => ({id: a.id, x: a.x, y: a.y}))
         };
+    }
+
+    getRecentActivities(): SimulationActivity[] {
+        return this.recentActivities;
+    }
+
+    public getParams(): SimulationParams {
+        return { ...this.params };
     }
 } 

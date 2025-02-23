@@ -1,40 +1,35 @@
 export class RandomSeeder {
     private seed: number;
-    
+    private temperature: number = 20; // Default temperature in Celsius
+
     constructor() {
-        // Initialize with current time components
-        const now = new Date();
-        const timeComponent = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
-        const dateComponent = now.getFullYear() * 10000 + (now.getMonth() + 1) * 100 + now.getDate();
-        
-        // Combine components into a seed
-        this.seed = timeComponent * dateComponent;
+        // Use current time as initial seed
+        this.seed = Date.now();
     }
 
-    // Set temperature data
-    public setTemperature(temperature: number) {
-        // Combine temperature with existing seed
-        this.seed = this.seed * Math.abs(temperature * 100);
+    public setTemperature(temp: number) {
+        this.temperature = temp;
+        // Update seed based on temperature
+        this.seed = this.seed * (1 + (this.temperature / 100));
     }
 
-    // Mulberry32 algorithm for seeded random number generation
-    private random(): number {
-        let t = this.seed += 0x6D2B79F5;
-        t = Math.imul(t ^ t >>> 15, t | 1);
-        t ^= t + Math.imul(t ^ t >>> 7, t | 61);
-        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    private random() {
+        // Simple random number generator using the seed
+        this.seed = (this.seed * 9301 + 49297) % 233280;
+        return this.seed / 233280;
     }
 
-    // Get random number within a range
-    public getRandomInRange(min: number, max: number): number {
-        return min + (max - min) * this.random();
-    }
+    public getRandomPosition() {
+        // Get window dimensions
+        const width = window.innerWidth;
+        const height = window.innerHeight;
 
-    // Get random position within window bounds with padding
-    public getRandomPosition(padding: number = 50): { x: number; y: number } {
+        // Add some padding to keep agents away from edges
+        const padding = 50;
+
         return {
-            x: this.getRandomInRange(padding, window.innerWidth - padding),
-            y: this.getRandomInRange(padding, window.innerHeight - padding)
+            x: padding + (width - 2 * padding) * this.random(),
+            y: padding + (height - 2 * padding) * this.random()
         };
     }
 } 

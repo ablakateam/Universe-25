@@ -41,28 +41,55 @@ export class Renderer {
             // Add sidebar header
             const header = document.createElement('div');
             header.className = 'simulation-sidebar-header';
-            header.textContent = 'Simulation Controls';
+            header.innerHTML = '<h2>SIMULATION CONTROLS</h2>';
             sidebar.appendChild(header);
 
-            // Create stats container (first)
-            let statsContainer = document.createElement('div');
-            statsContainer.className = 'simulation-stats';
-            sidebar.appendChild(statsContainer);
+            // Create stats section
+            const statsSection = document.createElement('div');
+            statsSection.className = 'simulation-stats';
+            statsSection.innerHTML = `
+                <h3>SYSTEM METRICS</h3>
+                <div class="stat-group">
+                    <div class="stat-item">
+                        <span class="stat-label">Population</span>
+                        <span class="stat-value" id="stat-population">0 👥</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Resources</span>
+                        <span class="stat-value" id="stat-resources">0 🍎</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Tick Count</span>
+                        <span class="stat-value" id="stat-tick">0 ⏱️</span>
+                    </div>
+                </div>
+            `;
+            sidebar.appendChild(statsSection);
 
-            // Create agent activity container (second)
-            let activityContainer = document.createElement('div');
-            activityContainer.className = 'agent-activity';
-            sidebar.appendChild(activityContainer);
+            // Create recent activities section
+            const activitiesSection = document.createElement('div');
+            activitiesSection.className = 'recent-activities';
+            activitiesSection.innerHTML = `
+                <h3>RECENT ACTIVITIES</h3>
+                <div class="activity-list"></div>
+            `;
+            sidebar.appendChild(activitiesSection);
 
-            // Create state info container (third)
-            let stateInfoContainer = document.createElement('div');
-            stateInfoContainer.className = 'state-info';
-            sidebar.appendChild(stateInfoContainer);
-
-            // Create legend container (fourth)
-            let legendContainer = document.createElement('div');
-            legendContainer.className = 'legend';
-            sidebar.appendChild(legendContainer);
+            // Create agent states section
+            const statesSection = document.createElement('div');
+            statesSection.className = 'agent-states';
+            statesSection.innerHTML = `
+                <h3>AGENT STATES</h3>
+                <div class="state-list">
+                    ${Object.entries(this.stateConfig).map(([state, config]) => `
+                        <div class="state-item">
+                            <span class="state-icon" style="color: ${config.color}">${config.symbol}</span>
+                            <span class="state-name">${state.toUpperCase()}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+            sidebar.appendChild(statesSection);
         }
 
         // Create toggle button with enhanced styling
@@ -77,6 +104,9 @@ export class Renderer {
                     sidebarElement.classList.toggle('collapsed');
                     toggleButton.classList.toggle('collapsed');
                     toggleButton.innerHTML = sidebarElement.classList.contains('collapsed') ? '▶' : '◀';
+                    
+                    // Trigger canvas resize
+                    this.p.windowResized();
                 }
             });
             document.body.appendChild(toggleButton);
@@ -99,7 +129,9 @@ export class Renderer {
             }
 
             // Create canvas with container dimensions
-            const canvas = p.createCanvas(container.clientWidth, container.clientHeight);
+            const sidebar = document.querySelector('.simulation-sidebar');
+            const width = sidebar?.classList.contains('collapsed') ? window.innerWidth : window.innerWidth - 350;
+            const canvas = p.createCanvas(width, window.innerHeight);
             canvas.parent(container);
             
             // Set initial styles
@@ -111,20 +143,29 @@ export class Renderer {
         };
 
         p.draw = () => {
-            p.background(20); // Dark background
+            // Clear the background
+            p.background(20);
 
             // Draw trails if enabled
             if (this.showTrails) {
                 this.drawTrails();
             }
 
-            // Draw resources
+            // Draw resources first (so they appear behind agents)
             this.drawResources();
 
             // Draw all agents
             const agents = this.engine.getAgents();
-            console.log('Drawing agents:', agents.length); // Debug log
-            agents.forEach(agent => this.drawAgent(agent));
+            if (agents.length === 0) {
+                console.warn('No agents to draw');
+            } else {
+                console.log('Drawing agents:', agents.length);
+            }
+            agents.forEach(agent => {
+                this.drawAgent(agent);
+                // Debug log for agent position
+                console.log(`Agent ${agent.id} position:`, agent.x, agent.y);
+            });
 
             // Draw stats
             this.drawStats();
@@ -136,10 +177,12 @@ export class Renderer {
         };
 
         p.windowResized = () => {
-            const container = document.getElementById('simulation-container');
-            if (container) {
-                p.resizeCanvas(container.clientWidth, container.clientHeight);
-            }
+            const sidebar = document.querySelector('.simulation-sidebar');
+            const width = sidebar?.classList.contains('collapsed') ? window.innerWidth : window.innerWidth - 350;
+            p.resizeCanvas(width, window.innerHeight);
+
+            // Log the new canvas size for debugging
+            console.log('Canvas resized:', width, window.innerHeight);
         };
 
         // Toggle trails with 'T' key
@@ -151,6 +194,19 @@ export class Renderer {
                 }
             }
         };
+
+        // Add event listener for sidebar toggle
+        const sidebarToggle = document.querySelector('.sidebar-toggle');
+        if (sidebarToggle) {
+            sidebarToggle.addEventListener('click', () => {
+                const sidebar = document.querySelector('.simulation-sidebar');
+                const width = sidebar?.classList.contains('collapsed') ? window.innerWidth : window.innerWidth - 350;
+                p.resizeCanvas(width, window.innerHeight);
+                
+                // Log the new canvas size after sidebar toggle
+                console.log('Canvas resized after sidebar toggle:', width, window.innerHeight);
+            });
+        }
     }
 
     private drawAgent(agent: Agent) {
@@ -350,7 +406,7 @@ export class Renderer {
 
     private drawStats() {
         const stats = this.engine.getStats();
-        const agents = this.engine.getAgents();
+        const recentActivities = this.engine.getRecentActivities();
         
         // Update stats content
         const statsContainer = document.querySelector('.simulation-stats');
@@ -387,43 +443,27 @@ export class Renderer {
         // Update agent activity content
         const activityContainer = document.querySelector('.agent-activity');
         if (activityContainer) {
-            // Get the 5 most recent activities
-            const recentActivities = agents
-                .slice(-5)
-                .map(agent => {
-                    const stateConfig = this.stateConfig[agent.state];
-                    let activityText = '';
-                    switch(agent.state) {
-                        case 'exploring':
-                            activityText = 'Searching for resources or mates';
-                            break;
-                        case 'eating':
-                            activityText = `Consuming resources (Energy: ${agent.energy.toFixed(0)}%)`;
-                            break;
-                        case 'mating':
-                            activityText = 'Looking for a mate';
-                            break;
-                        case 'resting':
-                            activityText = `Recovering energy (${agent.energy.toFixed(0)}%)`;
-                            break;
-                    }
-                    return `
-                        <div class="activity-item">
-                            <span class="activity-icon" style="color: ${stateConfig.color}">${stateConfig.symbol}</span>
-                            <div class="activity-details">
-                                <div>${activityText}</div>
-                                <div class="activity-agent-id">Agent #${agent.id}</div>
-                            </div>
+            const activityItems = recentActivities.map(activity => {
+                const stateConfig = this.stateConfig[activity.type as AgentState] || {
+                    symbol: '❓',
+                    color: '#999999'
+                };
+                
+                return `
+                    <div class="activity-item">
+                        <span class="activity-icon" style="color: ${stateConfig.color}">${stateConfig.symbol}</span>
+                        <div class="activity-details">
+                            <div>${activity.description}</div>
+                            <div class="activity-time">${this.formatTimestamp(activity.timestamp)}</div>
                         </div>
-                    `;
-                })
-                .reverse()
-                .join('');
+                    </div>
+                `;
+            }).join('');
 
             activityContainer.innerHTML = `
-                <h3>Recent Agent Activities</h3>
+                <h3>Recent Activities</h3>
                 <div class="activity-list">
-                    ${recentActivities || '<div class="activity-item">No recent activities</div>'}
+                    ${activityItems || '<div class="activity-item">No recent activities</div>'}
                 </div>
             `;
         }
@@ -499,5 +539,14 @@ export class Renderer {
                 </div>
             `;
         }
+    }
+
+    private formatTimestamp(timestamp: number): string {
+        const now = Date.now();
+        const diff = now - timestamp;
+        if (diff < 1000) return 'just now';
+        if (diff < 60000) return `${Math.floor(diff / 1000)}s ago`;
+        if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+        return `${Math.floor(diff / 3600000)}h ago`;
     }
 } 
